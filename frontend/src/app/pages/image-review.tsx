@@ -36,7 +36,7 @@ export default function ImageReview() {
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 90000); // 90초 타임아웃
 
-          const res = await fetch("${API_URL}/api/generate-image", {
+          const res = await fetch(`${API_URL}/api/generate-image`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -54,7 +54,7 @@ export default function ImageReview() {
           const data = await res.json();
           if (data.image_url) {
             updateSegment(index, {
-              generated_image_url: "${API_URL}" + data.image_url,
+              generated_image_url: data.runware_url,
               runware_url: data.runware_url
             });
           }
@@ -91,7 +91,7 @@ export default function ImageReview() {
       const timeoutId = setTimeout(() => controller.abort(), 90000);
 
       const newPrompt = segment.image_prompt + " " + prompt;
-      const res = await fetch("${API_URL}/api/generate-image", {
+      const res = await fetch(`${API_URL}/api/generate-image`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -109,7 +109,7 @@ export default function ImageReview() {
       const data = await res.json();
       if (data.image_url) {
         updateSegment(index, {
-          generated_image_url: "${API_URL}" + data.image_url,
+          generated_image_url: data.runware_url,
           runware_url: data.runware_url
         });
       }

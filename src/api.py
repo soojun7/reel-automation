@@ -379,13 +379,11 @@ async def generate_image_api(req: ImageGenerateRequest):
                 if data:
                     runware_url = data[0].get("imageURL") or data[0].get("imageUrl")
                     if runware_url:
-                        async with session.get(runware_url) as img:
-                            if img.status == 200:
-                                img_path.write_bytes(await img.read())
-                                return {
-                                    "image_url": f"/media/reel_{req.run_id}/{img_path.name}",
-                                    "runware_url": runware_url
-                                }
+                        # Runware CDN URL 바로 반환 (로컬 다운로드 스킵 = 속도 향상)
+                        return {
+                            "image_url": runware_url,
+                            "runware_url": runware_url
+                        }
 
             raise HTTPException(status_code=500, detail="Image generation failed - no data")
     except HTTPException:
