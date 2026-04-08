@@ -292,10 +292,32 @@ class CombineVideosRequest(BaseModel):
     include_subtitles: bool = False  # 자막 포함 여부
     font_name: str = "NotoSansKR-Bold"  # 자막 폰트
     max_chars: int = 15  # 줄당 최대 글자수
+    # 추가 효과 옵션
+    zoom_effect: bool = False  # 줌 효과
+    zoom_intensity: int = 50  # 줌 강도 (0-100)
+    transition_type: str = "none"  # 전환 효과 (fade, slide, zoom, none)
+    background_music_url: Optional[str] = None  # 배경음악 URL
 
 class SrtGenerateRequest(BaseModel):
     segments: List[dict]  # [{character_name, dialogue, duration}, ...]
     run_id: str
+
+from fastapi import UploadFile, File as FastAPIFile, Form
+
+@app.post("/api/upload-music")
+async def upload_music_api(file: UploadFile = FastAPIFile(...), run_id: str = Form(...)):
+    """배경음악 파일 업로드"""
+    if not s3_client:
+        raise HTTPException(status_code=500, detail="Storage not configured")
+
+    content = await file.read()
+    ext = file.filename.split('.')[-1] if '.' in file.filename else 'mp3'
+    r2_key = f"runs/{run_id}/music.{ext}"
+
+    content_type = file.content_type or 'audio/mpeg'
+    r2_url = upload_bytes_to_r2(content, r2_key, content_type=content_type)
+
+    return {"music_url": r2_url}
 
 async def analyze_script_with_claude(script_text: str, style_id: str, global_context: str = "") -> List[dict]:
     # Style-specific prompts
@@ -884,10 +906,22 @@ async def combine_videos_api(req: CombineVideosRequest):
 
             print(f"[combine] Video {i+1}: cutting at {cut_time:.2f}s (original: {video_duration:.2f}s)")
 
+            # 줌 효과 필터 구성
+            base_filter = 'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2'
+
+            if req.zoom_effect:
+                # Ken Burns 줌 효과 (zoom_intensity: 0-100 -> 1.0-1.3 scale)
+                zoom_scale = 1.0 + (req.zoom_intensity / 100) * 0.3
+                # 줌인 효과: 시작은 1.0, 끝은 zoom_scale
+                zoom_filter = f"zoompan=z='min(zoom+0.0015,{zoom_scale})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={int(cut_time*30)}:s=720x1280:fps=30"
+                vf_filter = f"{zoom_filter},fps=30"
+            else:
+                vf_filter = f"{base_filter},fps=30"
+
             # 자르기 + 스케일 + 인코딩
             subprocess.run([
                 'ffmpeg', '-i', vf, '-t', str(cut_time),
-                '-vf', 'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,fps=30',
+                '-vf', vf_filter,
                 '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
                 '-c:a', 'aac', '-ar', '44100', '-ac', '2', '-b:a', '128k',
                 '-avoid_negative_ts', 'make_zero',
@@ -902,8 +936,59 @@ async def combine_videos_api(req: CombineVideosRequest):
         for tf in trimmed_files:
             inputs.extend(['-i', tf])
 
-        filter_parts = ''.join([f'[{i}:v][{i}:a]' for i in range(n)])
-        filter_complex = f'{filter_parts}concat=n={n}:v=1:a=1[outv][outa]'
+        # 전환 효과 적용 (xfade 사용)
+        transition_duration = 0.5  # 전환 시간 (초)
+
+        if req.transition_type != "none" and n > 1:
+            # 각 영상 길이 측정
+            clip_durations = []
+            for tf in trimmed_files:
+                probe = subprocess.run([
+                    'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+                    '-of', 'default=noprint_wrappers=1:nokey=1', tf
+                ], capture_output=True, text=True)
+                try:
+                    clip_durations.append(float(probe.stdout.strip()))
+                except:
+                    clip_durations.append(5.0)
+
+            # xfade 전환 효과 타입 매핑
+            xfade_type = {
+                "fade": "fade",
+                "slide": "slideleft",
+                "zoom": "zoomin"
+            }.get(req.transition_type, "fade")
+
+            # 복잡한 xfade 필터 체인 생성
+            filter_parts = []
+            audio_parts = []
+
+            # 첫 번째 클립
+            current_video = "[0:v]"
+            current_audio = "[0:a]"
+            offset = clip_durations[0] - transition_duration
+
+            for i in range(1, n):
+                next_video = f"[{i}:v]"
+                next_audio = f"[{i}:a]"
+                out_video = f"[v{i}]" if i < n - 1 else "[outv]"
+                out_audio = f"[a{i}]" if i < n - 1 else "[outa]"
+
+                # 비디오 xfade
+                filter_parts.append(f"{current_video}{next_video}xfade=transition={xfade_type}:duration={transition_duration}:offset={offset}{out_video}")
+                # 오디오 acrossfade
+                filter_parts.append(f"{current_audio}{next_audio}acrossfade=d={transition_duration}{out_audio}")
+
+                current_video = out_video
+                current_audio = out_audio
+                if i < n - 1:
+                    offset += clip_durations[i] - transition_duration
+
+            filter_complex = ";".join(filter_parts)
+        else:
+            # 전환 효과 없이 단순 concat
+            filter_parts = ''.join([f'[{i}:v][{i}:a]' for i in range(n)])
+            filter_complex = f'{filter_parts}concat=n={n}:v=1:a=1[outv][outa]'
 
         final_temp = tempfile.NamedTemporaryFile(delete=False, suffix='_combined.mp4')
         final_temp.close()
@@ -919,7 +1004,7 @@ async def combine_videos_api(req: CombineVideosRequest):
 
         if not os.path.exists(final_temp.name) or os.path.getsize(final_temp.name) == 0:
             print(f"[combine] ffmpeg error: {result.stderr}")
-            raise HTTPException(status_code=500, detail="ffmpeg combination failed")
+            raise HTTPException(status_code=500, detail=f"ffmpeg combination failed: {result.stderr[:200]}")
 
         output_file = final_temp.name
         srt_url = None
@@ -977,7 +1062,51 @@ async def combine_videos_api(req: CombineVideosRequest):
             except:
                 pass
 
-        # 5. R2에 업로드
+        # 5. 배경음악 추가
+        if req.background_music_url:
+            print(f"[combine] Adding background music...")
+            try:
+                # 배경음악 다운로드
+                music_temp = await download_to_temp(req.background_music_url, suffix='.mp3')
+
+                music_output = tempfile.NamedTemporaryFile(delete=False, suffix='_music.mp4')
+                music_output.close()
+
+                # 영상 길이 확인
+                probe = subprocess.run([
+                    'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+                    '-of', 'default=noprint_wrappers=1:nokey=1', output_file
+                ], capture_output=True, text=True)
+                try:
+                    video_len = float(probe.stdout.strip())
+                except:
+                    video_len = 60.0
+
+                # 배경음악 믹싱 (원본 오디오 70%, 배경음악 30%)
+                music_result = subprocess.run([
+                    'ffmpeg', '-i', output_file, '-i', music_temp, '-t', str(video_len),
+                    '-filter_complex', '[1:a]volume=0.3,aloop=loop=-1:size=2e+09[bgm];[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[outa]',
+                    '-map', '0:v', '-map', '[outa]',
+                    '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
+                    '-shortest',
+                    music_output.name, '-y'
+                ], capture_output=True, text=True)
+
+                if os.path.exists(music_output.name) and os.path.getsize(music_output.name) > 0:
+                    output_file = music_output.name
+                    print(f"[combine] Background music added successfully")
+                else:
+                    print(f"[combine] Background music failed: {music_result.stderr}")
+
+                # 임시 파일 정리
+                try:
+                    os.unlink(music_temp)
+                except:
+                    pass
+            except Exception as e:
+                print(f"[combine] Background music error: {e}")
+
+        # 6. R2에 업로드
         r2_key = f"runs/{req.run_id}/final_combined.mp4"
         r2_url = upload_to_r2(output_file, r2_key, content_type='video/mp4')
         print(f"[combine] Uploaded to R2: {r2_url}")
@@ -1003,5 +1132,10 @@ async def combine_videos_api(req: CombineVideosRequest):
         try:
             if 'subtitled_temp' in locals() and os.path.exists(subtitled_temp.name):
                 os.unlink(subtitled_temp.name)
+        except:
+            pass
+        try:
+            if 'music_output' in locals() and os.path.exists(music_output.name):
+                os.unlink(music_output.name)
         except:
             pass

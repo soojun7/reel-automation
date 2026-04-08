@@ -107,6 +107,7 @@ export default function VideoGeneration() {
   const [maxCharacters, setMaxCharacters] = useState(15);
   const [zoomIntensity, setZoomIntensity] = useState(50);
   const [musicFile, setMusicFile] = useState<File | null>(null);
+  const [musicUrl, setMusicUrl] = useState<string | null>(null);
   
   const [settings, setSettings] = useState({
     subtitles: true,
@@ -115,10 +116,20 @@ export default function VideoGeneration() {
   });
 
   useEffect(() => {
-    // Determine if we need to generate videos
-    const needsGeneration = segments.some(s => !s.generated_video_url);
-    if (!needsGeneration && combinedVideoUrl) {
-      setCombineStatus("success");
+    // 세그먼트가 없으면 대기 (아직 로드 안됨)
+    if (!segments || segments.length === 0 || !runId) {
+      return;
+    }
+
+    // 모든 영상이 이미 생성되었는지 확인
+    const allVideosGenerated = segments.every(s => s.generated_video_url);
+
+    if (allVideosGenerated) {
+      // 모든 영상 있음 - 완료 상태로
+      setProgress(100);
+      if (combinedVideoUrl) {
+        setCombineStatus("success");
+      }
       setIsComplete(true);
       return;
     }
@@ -216,7 +227,11 @@ export default function VideoGeneration() {
                         selectedFont === "pretendard" ? "Pretendard-Bold" :
                         selectedFont === "nanumgothic" ? "NanumGothic" :
                         selectedFont === "malgun" ? "MalgunGothic" : "NotoSansKR-Bold",
-              max_chars: maxCharacters
+              max_chars: maxCharacters,
+              zoom_effect: settings.zoomEffect,
+              zoom_intensity: zoomIntensity,
+              transition_type: selectedTransition,
+              background_music_url: settings.backgroundMusic ? musicUrl : null
             })
           });
           const data = await res.json();
@@ -257,10 +272,29 @@ export default function VideoGeneration() {
     setSettings((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file && file.type.startsWith("audio/")) {
       setMusicFile(file);
+
+      // 파일을 R2에 업로드
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('run_id', runId);
+
+        const res = await fetch(`${API_URL}/api/upload-music`, {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        if (data.music_url) {
+          setMusicUrl(data.music_url);
+          toast.success("배경음악이 업로드되었습니다.");
+        }
+      } catch (e) {
+        toast.error("배경음악 업로드에 실패했습니다.");
+      }
     }
   };
 
@@ -339,7 +373,11 @@ export default function VideoGeneration() {
                     selectedFont === "pretendard" ? "Pretendard-Bold" :
                     selectedFont === "nanumgothic" ? "NanumGothic" :
                     selectedFont === "malgun" ? "MalgunGothic" : "NotoSansKR-Bold",
-          max_chars: maxCharacters
+          max_chars: maxCharacters,
+          zoom_effect: settings.zoomEffect,
+          zoom_intensity: zoomIntensity,
+          transition_type: selectedTransition,
+          background_music_url: settings.backgroundMusic ? musicUrl : null
         })
       });
       const data = await res.json();
