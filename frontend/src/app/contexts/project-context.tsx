@@ -8,7 +8,8 @@ export interface Segment {
   video_prompt: string;
   seed_image_url: string | null;
   seed_image_data?: string | null; // For custom uploads
-  is_logo?: boolean; // Whether this character is a brand logo
+  is_logo?: boolean; // Whether to use reference image
+  emotion?: string; // Per-character emotion (normal, happy, kind, excited, sad, angry)
   generated_image_url?: string;
   runware_url?: string; // Runware image URL for video generation
   generated_video_url?: string;

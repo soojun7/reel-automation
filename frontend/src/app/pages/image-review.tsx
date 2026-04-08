@@ -45,7 +45,7 @@ export default function ImageReview() {
               image_prompt: seg.image_prompt,
               seed_image_data: seg.seed_image_data || seg.seed_image_url || null,
               run_id: runId,
-              emotion: globalEmotion
+              emotion: seg.emotion || globalEmotion  // 개별 감정 우선, 없으면 글로벌
             }),
             signal: controller.signal
           });
@@ -100,7 +100,7 @@ export default function ImageReview() {
           image_prompt: newPrompt,
           seed_image_data: segment.seed_image_data || segment.seed_image_url || null,
           run_id: runId,
-          emotion: globalEmotion
+          emotion: segment.emotion || globalEmotion  // 개별 감정 우선
         }),
         signal: controller.signal
       });

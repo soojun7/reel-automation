@@ -123,8 +123,8 @@ export default function DetailedSettings() {
                   <Smile className="w-6 h-6 text-[var(--primary-500)]" />
                 </div>
                 <div>
-                  <h2 className="text-2xl font-bold text-[var(--text-100)]">감정 설정</h2>
-                  <p className="text-sm text-[var(--text-400)]">캐릭터의 전체적인 감정 톤을 선택하세요</p>
+                  <h2 className="text-2xl font-bold text-[var(--text-100)]">기본 감정 설정</h2>
+                  <p className="text-sm text-[var(--text-400)]">전체 캐릭터의 기본 감정 (개별 설정은 아래에서 가능)</p>
                 </div>
               </div>
 
@@ -447,36 +447,62 @@ export default function DetailedSettings() {
                     <ImageIcon className="w-6 h-6 text-[var(--primary-500)]" />
                   </div>
                   <div>
-                    <h2 className="text-2xl font-bold text-[var(--text-100)]">로고(원본) 확인 및 수정</h2>
-                    <p className="text-sm text-[var(--text-400)]">의인화할 대상의 로고 도메인이나 직접 이미지를 등록하세요.</p>
+                    <h2 className="text-2xl font-bold text-[var(--text-100)]">캐릭터별 설정</h2>
+                    <p className="text-sm text-[var(--text-400)]">각 캐릭터의 감정과 참고이미지를 설정하세요</p>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {segments.map((seg, index) => (
                     <div key={index} className="p-5 rounded-2xl border border-[var(--border)] bg-[var(--bg-700)]/50">
-                      <div className="flex justify-between items-center mb-2">
+                      <div className="flex justify-between items-center mb-4">
                         <div className="font-semibold text-[var(--text-100)] text-lg">{index + 1}. {seg.character_name}</div>
-                        <div className="flex items-center gap-3 bg-[var(--bg-800)] px-3 py-1.5 rounded-xl border border-[var(--border)]">
-                          <span className="text-sm font-medium text-[var(--text-300)]">로고 캐릭터</span>
-                          <Switch.Root 
-                            checked={seg.is_logo || false} 
-                            onCheckedChange={(checked) => {
-                              updateSegment(index, { 
-                                is_logo: checked,
-                                // Clear data when turning off
-                                ...(checked ? {} : { seed_image_url: null, seed_image_data: null, brand_domain: "" })
-                              });
-                            }} 
-                            className={`relative w-10 h-6 rounded-full transition-colors ${
-                              seg.is_logo ? "bg-gradient-to-r from-[var(--primary-500)] to-[var(--secondary-500)]" : "bg-[var(--bg-600)]"
-                            }`}
-                          >
-                            <Switch.Thumb className={`block w-4 h-4 bg-white rounded-full transition-transform shadow-lg ${
-                              seg.is_logo ? "translate-x-5" : "translate-x-1"
-                            }`} />
-                          </Switch.Root>
+                      </div>
+
+                      {/* 개별 감정 선택 */}
+                      <div className="mb-4">
+                        <label className="text-xs font-medium text-[var(--text-400)] mb-2 block">감정</label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {emotions.map((emotion) => {
+                            const Icon = emotion.icon;
+                            const isSelected = (seg.emotion || globalEmotion) === emotion.id;
+                            return (
+                              <button
+                                key={emotion.id}
+                                onClick={() => updateSegment(index, { emotion: emotion.id })}
+                                className={`p-2 rounded-xl border transition-all flex flex-col items-center gap-1 ${
+                                  isSelected
+                                    ? "border-[var(--primary-500)] bg-[var(--primary-500)]/10"
+                                    : "border-[var(--border)] bg-[var(--bg-800)] hover:border-[var(--primary-400)]"
+                                }`}
+                              >
+                                <Icon className={`w-4 h-4 ${isSelected ? "text-[var(--primary-500)]" : "text-[var(--text-400)]"}`} />
+                                <span className={`text-xs ${isSelected ? "text-[var(--text-100)]" : "text-[var(--text-400)]"}`}>{emotion.label}</span>
+                              </button>
+                            );
+                          })}
                         </div>
+                      </div>
+
+                      {/* 참고이미지 토글 */}
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-medium text-[var(--text-400)]">참고이미지 사용</span>
+                        <Switch.Root
+                          checked={seg.is_logo || false}
+                          onCheckedChange={(checked) => {
+                            updateSegment(index, {
+                              is_logo: checked,
+                              ...(checked ? {} : { seed_image_url: null, seed_image_data: null, brand_domain: "" })
+                            });
+                          }}
+                          className={`relative w-10 h-6 rounded-full transition-colors ${
+                            seg.is_logo ? "bg-gradient-to-r from-[var(--primary-500)] to-[var(--secondary-500)]" : "bg-[var(--bg-600)]"
+                          }`}
+                        >
+                          <Switch.Thumb className={`block w-4 h-4 bg-white rounded-full transition-transform shadow-lg ${
+                            seg.is_logo ? "translate-x-5" : "translate-x-1"
+                          }`} />
+                        </Switch.Root>
                       </div>
                       
                       <AnimatePresence>
