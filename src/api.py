@@ -466,7 +466,25 @@ async def generate_image_api(req: ImageGenerateRequest):
                 if data:
                     runware_url = data[0].get("imageURL") or data[0].get("imageUrl")
                     if runware_url:
-                        # Runware CDN URL 바로 반환 (로컬 다운로드 스킵 = 속도 향상)
+                        # R2에 업로드 (영구 저장)
+                        if s3_client:
+                            try:
+                                # 이미지 다운로드
+                                async with session.get(runware_url) as img_resp:
+                                    if img_resp.status == 200:
+                                        img_data = await img_resp.read()
+                                        # R2에 업로드
+                                        r2_key = f"runs/{req.run_id}/images/{req.segment_index+1:02d}_{req.character_name}.png"
+                                        r2_url = upload_bytes_to_r2(img_data, r2_key, content_type='image/png')
+                                        print(f"[generate-image] Uploaded to R2: {r2_url}")
+                                        return {
+                                            "image_url": r2_url,
+                                            "runware_url": runware_url
+                                        }
+                            except Exception as e:
+                                print(f"[generate-image] R2 upload failed, using Runware URL: {e}")
+
+                        # R2 실패시 Runware URL 반환
                         return {
                             "image_url": runware_url,
                             "runware_url": runware_url
@@ -561,7 +579,20 @@ async def generate_video_api(req: VideoGenerateRequest):
                     if status == "success":
                         video_url = item.get("videoURL") or item.get("videoUrl")
                         if video_url:
-                            # Runware CDN URL 바로 반환 (로컬 다운로드 스킵)
+                            # R2에 업로드 (영구 저장)
+                            if s3_client:
+                                try:
+                                    async with session.get(video_url) as vid_resp:
+                                        if vid_resp.status == 200:
+                                            vid_data = await vid_resp.read()
+                                            r2_key = f"runs/{req.run_id}/videos/{req.segment_index+1:02d}_{req.character_name}.mp4"
+                                            r2_url = upload_bytes_to_r2(vid_data, r2_key, content_type='video/mp4')
+                                            print(f"[generate-video] Uploaded to R2: {r2_url}")
+                                            return {"video_url": r2_url}
+                                except Exception as e:
+                                    print(f"[generate-video] R2 upload failed, using Runware URL: {e}")
+
+                            # R2 실패시 Runware URL 반환
                             return {"video_url": video_url}
                     elif status == "error":
                         raise HTTPException(status_code=500, detail="Runware video generation failed")
