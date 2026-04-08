@@ -29,7 +29,3 @@ services:
         fromDatabase:
           name: reel-db
           property: connectionString
-    disk:
-      name: reel-output
-      mountPath: /app/output
-      sizeGB: 1
