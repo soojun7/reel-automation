@@ -487,18 +487,13 @@ async def generate_video_api(req: VideoGenerateRequest):
     output_dir.mkdir(parents=True, exist_ok=True)
     vid_path = output_dir / f"{req.segment_index+1:02d}_{req.character_name}.mp4"
 
-    # 대사 길이에 따라 영상 길이 계산 (한글 약 5글자/초 기준, 여유있게)
+    # 대사 길이에 따라 영상 길이 계산 (한글 약 4글자/초 기준)
+    # Grok은 1-15초 지원
     dialogue_len = len(req.dialogue) if req.dialogue else 0
-    # 기본 최소 5초, 글자수 / 5 로 계산 (최대 10초)
-    calculated_duration = max(5, min(10, (dialogue_len // 5) + 3))
+    # 글자수 / 4 + 여유 2초, 최소 5초 ~ 최대 15초
+    duration = max(5, min(15, (dialogue_len // 4) + 2))
 
-    # Grok 모델은 5초 또는 10초만 지원할 수 있음 - 5초 초과시 10초로
-    if calculated_duration > 5:
-        duration = 10
-    else:
-        duration = 5
-
-    print(f"[generate-video] dialogue length: {dialogue_len}, duration: {duration}s, emotion: {req.emotion}")
+    print(f"[generate-video] dialogue: '{req.dialogue[:50]}...' len={dialogue_len}, duration={duration}s, emotion={req.emotion}")
 
     # 감정에 따른 목소리 톤 지시 추가
     emotion_voice_modifier = ""
@@ -530,6 +525,8 @@ async def generate_video_api(req: VideoGenerateRequest):
         "deliveryMethod": "async"
     }]
 
+    print(f"[generate-video] Sending payload with duration={duration}: {payload}")
+
     async with aiohttp.ClientSession() as session:
         # 1. 비디오 생성 요청
         async with session.post(
@@ -538,8 +535,10 @@ async def generate_video_api(req: VideoGenerateRequest):
             headers={"Authorization": f"Bearer {RUNWARE_API_KEY}", "Content-Type": "application/json"},
             timeout=aiohttp.ClientTimeout(total=60)
         ) as resp:
+            resp_text = await resp.text()
+            print(f"[generate-video] Runware response: {resp_text[:500]}")
             if resp.status != 200:
-                print(f"Runware Video Error: {await resp.text()}")
+                print(f"Runware Video Error: {resp_text}")
                 raise HTTPException(status_code=500, detail="Runware video API failed")
 
         # 2. 결과 폴링 (최대 3분)
