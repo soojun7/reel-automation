@@ -572,9 +572,18 @@ async def generate_video_api(req: VideoGenerateRequest):
 async def combine_videos_api(req: CombineVideosRequest):
     """영상들을 다운로드 → ffmpeg로 합치기 → R2에 업로드"""
     import subprocess
+    import shutil
+
+    # ffmpeg 존재 확인
+    if not shutil.which('ffmpeg'):
+        print("[combine] ERROR: ffmpeg not found!")
+        raise HTTPException(status_code=500, detail="ffmpeg not installed on server")
 
     if not req.video_urls:
         raise HTTPException(status_code=400, detail="No video URLs provided")
+
+    print(f"[combine] Starting combine for {len(req.video_urls)} videos, run_id={req.run_id}")
+    print(f"[combine] URLs: {req.video_urls}")
 
     temp_files = []
     trimmed_files = []
@@ -583,13 +592,28 @@ async def combine_videos_api(req: CombineVideosRequest):
         # 1. 모든 영상 다운로드
         print(f"[combine] Downloading {len(req.video_urls)} videos...")
         for i, url in enumerate(req.video_urls):
-            temp_path = await download_to_temp(url, suffix=f"_{i}.mp4")
-            temp_files.append(temp_path)
-            print(f"[combine] Downloaded {i+1}/{len(req.video_urls)}: {temp_path}")
+            try:
+                temp_path = await download_to_temp(url, suffix=f"_{i}.mp4")
+                temp_files.append(temp_path)
+                print(f"[combine] Downloaded {i+1}/{len(req.video_urls)}: {temp_path}")
+            except Exception as e:
+                print(f"[combine] ERROR downloading video {i}: {e}")
+                raise
 
         # 2. 각 영상 처리 (끝 무음 감지 + 자르기)
         for i, vf in enumerate(temp_files):
             trimmed = vf.replace('.mp4', '_cut.mp4')
+
+            # 영상 길이 확인
+            probe_result = subprocess.run([
+                'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1', vf
+            ], capture_output=True, text=True)
+            try:
+                video_duration = float(probe_result.stdout.strip())
+            except:
+                video_duration = 15.0  # 기본값
+            print(f"[combine] Video {i+1} duration: {video_duration:.2f}s")
 
             # 끝 무음 감지
             detect_result = subprocess.run([
@@ -606,13 +630,13 @@ async def combine_videos_api(req: CombineVideosRequest):
                     except:
                         pass
 
-            # 끝 무음 시작점 (없으면 5.5초 기본값)
+            # 끝 무음 시작점 (없으면 원본 길이의 90% 또는 영상 끝)
             if silence_starts and silence_starts[-1] > 1.0:
-                cut_time = min(silence_starts[-1] + 0.2, 6.0)
+                cut_time = min(silence_starts[-1] + 0.3, video_duration)
             else:
-                cut_time = 5.5
+                cut_time = video_duration  # 무음 없으면 전체 사용
 
-            print(f"[combine] Video {i+1}: cutting at {cut_time:.2f}s")
+            print(f"[combine] Video {i+1}: cutting at {cut_time:.2f}s (original: {video_duration:.2f}s)")
 
             # 자르기 + 스케일 + 인코딩
             subprocess.run([
