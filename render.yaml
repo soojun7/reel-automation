@@ -2,7 +2,7 @@ databases:
   - name: reel-db
     databaseName: reel_automation
     user: reel_user
-    plan: starter
+    plan: basic
     region: singapore
 
 services:
