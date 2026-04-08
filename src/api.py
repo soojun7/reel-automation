@@ -487,20 +487,16 @@ async def generate_video_api(req: VideoGenerateRequest):
     output_dir.mkdir(parents=True, exist_ok=True)
     vid_path = output_dir / f"{req.segment_index+1:02d}_{req.character_name}.mp4"
 
-    # 대사 길이에 따라 영상 길이 계산 (한글 약 3-4글자/초)
+    # 대사 길이에 따라 영상 길이 계산 (한글 약 5글자/초 기준, 여유있게)
     dialogue_len = len(req.dialogue) if req.dialogue else 0
-    if dialogue_len <= 20:
-        duration = 5
-    elif dialogue_len <= 40:
-        duration = 6
-    elif dialogue_len <= 60:
-        duration = 7
-    elif dialogue_len <= 80:
-        duration = 8
-    elif dialogue_len <= 100:
-        duration = 9
-    else:
+    # 기본 최소 5초, 글자수 / 5 로 계산 (최대 10초)
+    calculated_duration = max(5, min(10, (dialogue_len // 5) + 3))
+
+    # Grok 모델은 5초 또는 10초만 지원할 수 있음 - 5초 초과시 10초로
+    if calculated_duration > 5:
         duration = 10
+    else:
+        duration = 5
 
     print(f"[generate-video] dialogue length: {dialogue_len}, duration: {duration}s, emotion: {req.emotion}")
 
