@@ -108,9 +108,10 @@ app.mount("/media", StaticFiles(directory=str(OUTPUT_DIR)), name="media")
 # Serve frontend static files (for production)
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend" / "dist"
 if FRONTEND_DIR.exists():
-    from fastapi.responses import FileResponse
+    from fastapi.responses import FileResponse, Response
 
     @app.get("/")
+    @app.head("/")
     async def serve_index():
         return FileResponse(FRONTEND_DIR / "index.html")
 
