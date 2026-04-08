@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 from config import RUNWARE_API_KEY, WAVESPEED_API_KEY, OUTPUT_DIR
+from database import init_db, async_session, Project
 CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
 
 # Cloudflare R2 설정
@@ -86,11 +87,140 @@ async def download_to_temp(url: str, suffix: str = ".mp4") -> str:
 
 app = FastAPI(title="Reel Studio API")
 
+# Database initialization on startup
+@app.on_event("startup")
+async def startup_event():
+    await init_db()
+
 # Health check endpoint for Render
 @app.get("/health")
 @app.head("/health")
 async def health_check():
     return {"status": "ok"}
+
+# ============ Project API ============
+
+class ProjectSaveRequest(BaseModel):
+    project_id: str  # run_id
+    project_name: Optional[str] = None
+    style_id: str = "personification"
+    global_emotion: str = "normal"
+    script_text: str = ""
+    global_context: str = ""
+    segments: List[dict] = []
+    combined_video_url: Optional[str] = None
+
+@app.post("/api/projects")
+async def save_project(req: ProjectSaveRequest):
+    """프로젝트 저장 (생성 또는 업데이트)"""
+    if not async_session:
+        return {"status": "ok", "message": "Database not configured, skipped"}
+
+    from sqlalchemy import select
+    async with async_session() as session:
+        # 기존 프로젝트 확인
+        result = await session.execute(
+            select(Project).where(Project.id == req.project_id)
+        )
+        project = result.scalar_one_or_none()
+
+        if project:
+            # 업데이트
+            project.name = req.project_name
+            project.style_id = req.style_id
+            project.global_emotion = req.global_emotion
+            project.script_text = req.script_text
+            project.global_context = req.global_context
+            project.segments = req.segments
+            project.combined_video_url = req.combined_video_url
+        else:
+            # 생성
+            project = Project(
+                id=req.project_id,
+                name=req.project_name,
+                style_id=req.style_id,
+                global_emotion=req.global_emotion,
+                script_text=req.script_text,
+                global_context=req.global_context,
+                segments=req.segments,
+                combined_video_url=req.combined_video_url
+            )
+            session.add(project)
+
+        await session.commit()
+        print(f"[project] Saved project: {req.project_id}")
+        return {"status": "ok", "project_id": req.project_id}
+
+@app.get("/api/projects/{project_id}")
+async def get_project(project_id: str):
+    """프로젝트 불러오기"""
+    if not async_session:
+        raise HTTPException(status_code=404, detail="Database not configured")
+
+    from sqlalchemy import select
+    async with async_session() as session:
+        result = await session.execute(
+            select(Project).where(Project.id == project_id)
+        )
+        project = result.scalar_one_or_none()
+
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        return {
+            "project_id": project.id,
+            "project_name": project.name,
+            "style_id": project.style_id,
+            "global_emotion": project.global_emotion,
+            "script_text": project.script_text,
+            "global_context": project.global_context,
+            "segments": project.segments,
+            "combined_video_url": project.combined_video_url,
+            "created_at": project.created_at.isoformat() if project.created_at else None,
+            "updated_at": project.updated_at.isoformat() if project.updated_at else None
+        }
+
+@app.get("/api/projects")
+async def list_projects():
+    """프로젝트 목록"""
+    if not async_session:
+        return {"projects": []}
+
+    from sqlalchemy import select
+    async with async_session() as session:
+        result = await session.execute(
+            select(Project).order_by(Project.created_at.desc())
+        )
+        projects = result.scalars().all()
+
+        return {
+            "projects": [
+                {
+                    "project_id": p.id,
+                    "project_name": p.name,
+                    "style_id": p.style_id,
+                    "segment_count": len(p.segments) if p.segments else 0,
+                    "has_combined_video": bool(p.combined_video_url),
+                    "created_at": p.created_at.isoformat() if p.created_at else None
+                }
+                for p in projects
+            ]
+        }
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: str):
+    """프로젝트 삭제"""
+    if not async_session:
+        return {"status": "ok", "message": "Database not configured"}
+
+    from sqlalchemy import select, delete
+    async with async_session() as session:
+        await session.execute(
+            delete(Project).where(Project.id == project_id)
+        )
+        await session.commit()
+        print(f"[project] Deleted project: {project_id}")
+        return {"status": "ok"}
 
 # Enable CORS for the React frontend
 app.add_middleware(

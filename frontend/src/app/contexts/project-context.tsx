@@ -1,4 +1,6 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from "react";
+
+const API_URL = import.meta.env.VITE_API_URL || "";
 
 export interface Segment {
   character_name: string;
@@ -39,6 +41,8 @@ interface ProjectContextType extends ProjectState {
   setRunId: (id: string) => void;
   setCombinedVideoUrl: (url: string | null) => void;
   clearProject: () => void;
+  saveProject: () => Promise<void>;  // 수동 저장
+  loadProject: (projectId: string) => Promise<boolean>;  // 프로젝트 불러오기
 }
 
 const STORAGE_KEY = "reel-studio-project";
@@ -84,20 +88,119 @@ const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
 export function ProjectProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<ProjectState>(defaultState);
   const [isHydrated, setIsHydrated] = useState(false);
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // 서버에 프로젝트 저장
+  const saveProjectToServer = useCallback(async (projectState: ProjectState) => {
+    if (!projectState.runId) return; // runId가 없으면 저장하지 않음
+
+    try {
+      await fetch(`${API_URL}/api/projects`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: projectState.runId,
+          project_name: projectState.projectName,
+          style_id: projectState.styleId,
+          global_emotion: projectState.globalEmotion,
+          script_text: projectState.scriptText,
+          global_context: projectState.globalContext,
+          segments: projectState.segments,
+          combined_video_url: projectState.combinedVideoUrl
+        })
+      });
+      console.log("[project] Saved to server:", projectState.runId);
+    } catch (e) {
+      console.error("[project] Failed to save to server:", e);
+    }
+  }, []);
+
+  // 서버에서 프로젝트 불러오기
+  const loadProject = useCallback(async (projectId: string): Promise<boolean> => {
+    try {
+      const resp = await fetch(`${API_URL}/api/projects/${projectId}`);
+      if (!resp.ok) return false;
+
+      const data = await resp.json();
+      setState({
+        projectId: data.project_id,
+        projectName: data.project_name,
+        styleId: data.style_id || "personification",
+        globalEmotion: data.global_emotion || "normal",
+        scriptText: data.script_text || "",
+        globalContext: data.global_context || "",
+        segments: data.segments || [],
+        runId: data.project_id,
+        combinedVideoUrl: data.combined_video_url
+      });
+      console.log("[project] Loaded from server:", projectId);
+      return true;
+    } catch (e) {
+      console.error("[project] Failed to load from server:", e);
+      return false;
+    }
+  }, []);
+
+  // 수동 저장 함수
+  const saveProject = useCallback(async () => {
+    await saveProjectToServer(state);
+    saveToStorage(state);
+  }, [state, saveProjectToServer]);
 
   // 클라이언트에서 localStorage 복원
   useEffect(() => {
     const saved = loadFromStorage();
     setState(saved);
     setIsHydrated(true);
+
+    // URL에서 project_id 파라미터 확인
+    const params = new URLSearchParams(window.location.search);
+    const projectIdFromUrl = params.get("project_id");
+    if (projectIdFromUrl) {
+      // loadProject 직접 호출 대신 fetch 사용 (dependency 이슈 방지)
+      fetch(`${API_URL}/api/projects/${projectIdFromUrl}`)
+        .then(resp => resp.ok ? resp.json() : null)
+        .then(data => {
+          if (data) {
+            setState({
+              projectId: data.project_id,
+              projectName: data.project_name,
+              styleId: data.style_id || "personification",
+              globalEmotion: data.global_emotion || "normal",
+              scriptText: data.script_text || "",
+              globalContext: data.global_context || "",
+              segments: data.segments || [],
+              runId: data.project_id,
+              combinedVideoUrl: data.combined_video_url
+            });
+            console.log("[project] Loaded from URL param:", projectIdFromUrl);
+          }
+        })
+        .catch(e => console.error("[project] Failed to load:", e));
+    }
   }, []);
 
-  // 상태 변경시 localStorage에 저장
+  // 상태 변경시 디바운스로 저장 (localStorage + 서버)
   useEffect(() => {
     if (isHydrated) {
+      // localStorage는 즉시 저장
       saveToStorage(state);
+
+      // 서버 저장은 디바운스 (1초 후)
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+      saveTimeoutRef.current = setTimeout(() => {
+        saveProjectToServer(state);
+      }, 1000);
     }
-  }, [state, isHydrated]);
+
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
+  }, [state, isHydrated, saveProjectToServer]);
 
   const setProjectId = (id: string | null) => setState(prev => ({ ...prev, projectId: id }));
   const setProjectName = (name: string | null) => setState(prev => ({ ...prev, projectName: name }));
@@ -136,7 +239,9 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         updateSegment,
         setRunId,
         setCombinedVideoUrl,
-        clearProject
+        clearProject,
+        saveProject,
+        loadProject
       }}
     >
       {children}
