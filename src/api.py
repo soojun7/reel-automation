@@ -203,10 +203,20 @@ def convert_to_prompts(segments: List[dict], style_id: str, global_context: str 
     elif style_id == "pop-art":
         style_modifiers = "pop art, bold colors, comic book style, halftone dots"
 
-    # 참고사항이 있으면 이미지 프롬프트에 추가할 문구 준비
-    context_addition = ""
+    # 참고사항이 있으면 배경 설명으로 변환
+    context_background = ""
     if global_context.strip():
-        context_addition = f", {global_context}"
+        # 냉장고 관련 키워드 감지 및 영문 변환
+        gc = global_context.lower()
+        if "냉장고" in gc:
+            context_background = "IMPORTANT BACKGROUND: inside a refrigerator, cold frosty interior with shelves, cold mist, ice crystals, refrigerator lighting"
+        elif "주방" in gc or "키친" in gc:
+            context_background = "IMPORTANT BACKGROUND: kitchen environment, countertop, cooking utensils"
+        elif "식탁" in gc:
+            context_background = "IMPORTANT BACKGROUND: dining table setting, plates, cutlery"
+        else:
+            # 일반적인 경우 그대로 추가
+            context_background = f"IMPORTANT BACKGROUND CONTEXT: {global_context}"
 
     for seg in segments:
         name = seg.get("character_name", "캐릭터")
@@ -217,12 +227,15 @@ def convert_to_prompts(segments: List[dict], style_id: str, global_context: str 
         background = seg.get("background_scene", "clean minimal background")
         brand_domain = seg.get("brand_domain", "").strip()
 
+        # 참고사항이 있으면 배경 대체, 없으면 기존 배경 사용
+        final_background = context_background if context_background else background
+
         result.append({
             "character_name": name,
             "dialogue": dialogue,
             "brand_domain": brand_domain,
             "is_logo": bool(brand_domain),
-            "image_prompt": f"Hyper realistic 3D render, {char_appearance}, {style_modifiers}, {background}{context_addition}, shallow depth of field with blurred background, warm cinematic lighting, photorealistic textures and materials, steam or particles for atmosphere, vertical 9:16 aspect ratio",
+            "image_prompt": f"{final_background}, Hyper realistic 3D render, {char_appearance}, {style_modifiers}, shallow depth of field with blurred background, cold lighting with blue tint, photorealistic textures and materials, steam or frost particles for atmosphere, vertical 9:16 aspect ratio",
             "video_prompt": f"""Character "{name}" speaks this dialogue in Korean:
 "{dialogue}"
 
