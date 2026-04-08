@@ -73,15 +73,20 @@ def upload_bytes_to_r2(data: bytes, key: str, content_type: str = None) -> str:
     return f"{R2_PUBLIC_URL}/{full_key}"
 
 async def download_to_temp(url: str, suffix: str = ".mp4") -> str:
-    """URL에서 파일을 다운로드해서 임시 파일로 저장"""
+    """URL에서 파일을 다운로드해서 임시 파일로 저장 (스트리밍 방식으로 메모리 절약)"""
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as resp:
             if resp.status != 200:
+                temp_file.close()
+                os.unlink(temp_file.name)
                 raise Exception(f"Failed to download: {url}")
-            data = await resp.read()
 
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    temp_file.write(data)
+            # 청크 단위로 스트리밍 다운로드 (메모리 절약)
+            async for chunk in resp.content.iter_chunked(64 * 1024):  # 64KB chunks
+                temp_file.write(chunk)
+
     temp_file.close()
     return temp_file.name
 
@@ -857,13 +862,18 @@ async def combine_videos_api(req: CombineVideosRequest):
     trimmed_files = []
 
     try:
-        # 1. 모든 영상 다운로드
-        print(f"[combine] Downloading {len(req.video_urls)} videos...")
+        # 1. 영상 순차 다운로드 및 처리 (메모리 절약)
+        print(f"[combine] Processing {len(req.video_urls)} videos sequentially...")
         for i, url in enumerate(req.video_urls):
             try:
+                # 다운로드
                 temp_path = await download_to_temp(url, suffix=f"_{i}.mp4")
                 temp_files.append(temp_path)
                 print(f"[combine] Downloaded {i+1}/{len(req.video_urls)}: {temp_path}")
+
+                # 즉시 가비지 컬렉션 유도
+                import gc
+                gc.collect()
             except Exception as e:
                 print(f"[combine] ERROR downloading video {i}: {e}")
                 raise
