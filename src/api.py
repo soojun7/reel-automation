@@ -86,8 +86,7 @@ async def download_to_temp(url: str, suffix: str = ".mp4") -> str:
 
 app = FastAPI(title="Reel Studio API")
 
-# Health check endpoint for Render (supports both GET and HEAD)
-@app.head("/")
+# Health check endpoint for Render
 @app.get("/health")
 @app.head("/health")
 async def health_check():
