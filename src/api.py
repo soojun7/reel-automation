@@ -143,6 +143,7 @@ class VideoGenerateRequest(BaseModel):
     image_url: str  # Runware URL (https://im.runware.ai/...)
     run_id: str
     dialogue: str = ""  # 대사 (길이에 따라 영상 길이 조절)
+    emotion: str = "normal"  # 감정 (목소리 톤 반영)
 
 class CombineVideosRequest(BaseModel):
     video_urls: List[str]
@@ -494,7 +495,22 @@ async def generate_video_api(req: VideoGenerateRequest):
     else:
         duration = 10
 
-    print(f"[generate-video] dialogue length: {dialogue_len}, duration: {duration}s")
+    print(f"[generate-video] dialogue length: {dialogue_len}, duration: {duration}s, emotion: {req.emotion}")
+
+    # 감정에 따른 목소리 톤 지시 추가
+    emotion_voice_modifier = ""
+    if req.emotion == "happy":
+        emotion_voice_modifier = "\n\nVOICE EMOTION: Speak with a VERY HAPPY, cheerful, bright tone. Voice should sound joyful and upbeat!"
+    elif req.emotion == "kind":
+        emotion_voice_modifier = "\n\nVOICE EMOTION: Speak with a WARM, gentle, caring tone. Voice should sound soft and friendly!"
+    elif req.emotion == "excited":
+        emotion_voice_modifier = "\n\nVOICE EMOTION: Speak with HIGH ENERGY, enthusiastic, thrilled tone. Voice should sound pumped up and excited!"
+    elif req.emotion == "sad":
+        emotion_voice_modifier = "\n\nVOICE EMOTION: Speak with a SAD, melancholic, sorrowful tone. Voice should sound depressed and gloomy!"
+    elif req.emotion == "angry":
+        emotion_voice_modifier = "\n\nVOICE EMOTION: Speak with an ANGRY, furious, aggressive tone. Voice should sound irritated and mad!"
+
+    final_video_prompt = req.video_prompt + emotion_voice_modifier
 
     task_uuid = str(uuid.uuid4())
     payload = [{
@@ -506,7 +522,7 @@ async def generate_video_api(req: VideoGenerateRequest):
         "width": 720,
         "numberResults": 1,
         "inputs": {"frameImages": [{"image": req.image_url}]},
-        "positivePrompt": req.video_prompt,
+        "positivePrompt": final_video_prompt,
         "duration": duration,
         "deliveryMethod": "async"
     }]

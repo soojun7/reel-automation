@@ -123,6 +123,16 @@ export default function VideoGeneration() {
       let completed = 0;
       const total = segments.filter(s => !s.generated_video_url).length;
 
+      // 로컬에서 video URL 추적 (React 상태 업데이트 비동기 문제 해결)
+      const generatedVideoUrls: Record<number, string> = {};
+
+      // 기존에 생성된 URL도 추가
+      segments.forEach((seg, i) => {
+        if (seg.generated_video_url) {
+          generatedVideoUrls[i] = seg.generated_video_url;
+        }
+      });
+
       // 모든 세그먼트 동시 생성 시작 표시
       segments.forEach((seg, i) => {
         if (!seg.generated_video_url) {
@@ -147,7 +157,8 @@ export default function VideoGeneration() {
               video_prompt: seg.video_prompt,
               image_url: seg.runware_url,
               run_id: runId,
-              dialogue: seg.dialogue  // 대사 길이에 따라 영상 길이 조절
+              dialogue: seg.dialogue,  // 대사 길이에 따라 영상 길이 조절
+              emotion: seg.emotion || "normal"  // 캐릭터별 감정 (목소리 톤 반영)
             }),
             signal: controller.signal
           });
@@ -156,6 +167,7 @@ export default function VideoGeneration() {
           const data = await res.json();
           if (data.video_url) {
             // Runware CDN URL 직접 사용
+            generatedVideoUrls[i] = data.video_url;  // 로컬 추적
             updateSegment(i, { generated_video_url: data.video_url });
             setGeneratingStates(prev => ({ ...prev, [i]: "completed" }));
           } else {
@@ -174,14 +186,12 @@ export default function VideoGeneration() {
 
       // 영상 합치기 (R2 스토리지 사용)
       try {
-        // 최신 segments 상태에서 video URL 가져오기
+        // 로컬에서 추적한 video URL 사용 (React 상태 비동기 문제 해결)
         const videoUrls = segments
-          .map((s, i) => {
-            // updateSegment가 비동기라서 직접 generated_video_url을 가져올 수 없음
-            // Promise.all 완료 후 상태가 업데이트되었을 것이므로 다시 fetch
-            return s.generated_video_url;
-          })
+          .map((_, i) => generatedVideoUrls[i])
           .filter(Boolean);
+
+        console.log(`[combine] Video URLs to combine: ${videoUrls.length}`, videoUrls);
 
         if (videoUrls.length > 0) {
           const res = await fetch(`${API_URL}/api/combine-videos`, {
@@ -195,6 +205,8 @@ export default function VideoGeneration() {
           const data = await res.json();
           if (data.video_url) {
             setCombinedVideoUrl(data.video_url);
+          } else {
+            console.error("[combine] No video_url in response", data);
           }
         }
       } catch (e) {
