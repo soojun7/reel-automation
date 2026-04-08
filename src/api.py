@@ -488,10 +488,10 @@ async def generate_video_api(req: VideoGenerateRequest):
     vid_path = output_dir / f"{req.segment_index+1:02d}_{req.character_name}.mp4"
 
     # 대사 길이에 따라 영상 길이 계산
-    # 한글 TTS는 약 5-6글자/초, Grok은 1-15초 지원
+    # 88자 = 12초 기준 → 약 7글자/초, Grok은 1-15초 지원
     dialogue_len = len(req.dialogue) if req.dialogue else 0
-    # 글자수 / 6 + 1초 여유, 최소 5초 ~ 최대 12초
-    duration = max(5, min(12, (dialogue_len // 6) + 1))
+    # 글자수 / 7, 최소 5초 ~ 최대 15초
+    duration = max(5, min(15, dialogue_len // 7)) if dialogue_len > 0 else 5
 
     dialogue_preview = (req.dialogue or "")[:50]
     print(f"[generate-video] dialogue: '{dialogue_preview}' len={dialogue_len}, duration={duration}s, emotion={req.emotion}")
