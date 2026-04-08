@@ -30,7 +30,7 @@ interface ProjectContextType {
   setGlobalContext: (context: string) => void;
   segments: Segment[];
   setSegments: (segments: Segment[]) => void;
-  updateSegment: (index: int, updates: Partial<Segment>) => void;
+  updateSegment: (index: number, updates: Partial<Segment>) => void;
   runId: string;
   setRunId: (id: string) => void;
   combinedVideoUrl: string | null;
