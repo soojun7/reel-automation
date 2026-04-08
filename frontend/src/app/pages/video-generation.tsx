@@ -154,7 +154,8 @@ export default function VideoGeneration() {
 
           const data = await res.json();
           if (data.video_url) {
-            updateSegment(i, { generated_video_url: API_URL + data.video_url });
+            // Runware CDN URL 직접 사용
+            updateSegment(i, { generated_video_url: data.video_url });
             setGeneratingStates(prev => ({ ...prev, [i]: "completed" }));
           } else {
             setGeneratingStates(prev => ({ ...prev, [i]: "error" }));
@@ -170,25 +171,8 @@ export default function VideoGeneration() {
 
       await Promise.all(promises);
 
-      // Generate combined
-      try {
-        const currentSegments = useProject.getState?.().segments || segments; // Need fresh segments but let's assume updateSegment triggered re-render and we fetch after all are done. 
-        // Actually, we'll fetch from the component state by requesting the combined API
-        const res = await fetch(`${API_URL}/api/combine-videos`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            video_urls: segments.map(s => s.generated_video_url).filter(Boolean),
-            run_id: runId
-          })
-        });
-        const data = await res.json();
-        if (data.video_url) {
-          setCombinedVideoUrl(API_URL + data.video_url);
-        }
-      } catch (e) {
-        console.error("Combine failed", e);
-      }
+      // 영상 합치기는 서버 스토리지가 필요해서 클라우드 스토리지 연동 후 구현 예정
+      // 지금은 개별 영상만 지원
 
       setIsComplete(true);
     };

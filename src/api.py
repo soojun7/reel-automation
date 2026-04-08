@@ -460,10 +460,8 @@ async def generate_video_api(req: VideoGenerateRequest):
                     if status == "success":
                         video_url = item.get("videoURL") or item.get("videoUrl")
                         if video_url:
-                            async with session.get(video_url) as vid:
-                                if vid.status == 200:
-                                    vid_path.write_bytes(await vid.read())
-                                    return {"video_url": f"/media/reel_{req.run_id}/{vid_path.name}"}
+                            # Runware CDN URL 바로 반환 (로컬 다운로드 스킵)
+                            return {"video_url": video_url}
                     elif status == "error":
                         raise HTTPException(status_code=500, detail="Runware video generation failed")
 
