@@ -6,17 +6,21 @@ databases:
     region: singapore
 
 services:
-  # FastAPI Backend
+  # Combined Backend + Frontend
   - type: web
-    name: reel-api
+    name: reel-studio
     runtime: python
     region: singapore
     plan: free
-    buildCommand: pip install -r requirements.txt
+    buildCommand: |
+      pip install -r requirements.txt &&
+      cd frontend && npm install && npm run build
     startCommand: uvicorn src.api:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
         value: "3.11"
+      - key: NODE_VERSION
+        value: "20"
       - key: CLAUDE_API_KEY
         sync: false
       - key: RUNWARE_API_KEY
@@ -29,25 +33,3 @@ services:
       name: reel-output
       mountPath: /app/output
       sizeGB: 1
-
-  # React Frontend
-  - type: web
-    name: reel-frontend
-    runtime: static
-    region: singapore
-    buildCommand: cd frontend && npm install && npm run build
-    staticPublishPath: frontend/dist
-    envVars:
-      - key: VITE_API_URL
-        fromService:
-          name: reel-api
-          type: web
-          property: host
-    headers:
-      - path: /*
-        name: Cache-Control
-        value: no-cache
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html

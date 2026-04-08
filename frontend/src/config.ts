@@ -1,4 +1,4 @@
-// API URL 설정 (환경변수 또는 기본값)
-export const API_URL = import.meta.env.VITE_API_URL
-  ? `https://${import.meta.env.VITE_API_URL}`
-  : "http://localhost:8000";
+// API URL 설정
+// 프로덕션: 같은 서버에서 서빙되므로 빈 문자열 (상대경로)
+// 개발: localhost:8000
+export const API_URL = import.meta.env.PROD ? "" : "http://localhost:8000";

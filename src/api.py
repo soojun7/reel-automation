@@ -36,6 +36,30 @@ app.add_middleware(
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/media", StaticFiles(directory=str(OUTPUT_DIR)), name="media")
 
+# Serve frontend static files (for production)
+FRONTEND_DIR = Path(__file__).parent.parent / "frontend" / "dist"
+if FRONTEND_DIR.exists():
+    from fastapi.responses import FileResponse
+
+    @app.get("/")
+    async def serve_index():
+        return FileResponse(FRONTEND_DIR / "index.html")
+
+    # Serve static assets
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIR / "assets")), name="assets")
+
+    # Catch-all for SPA routing (must be after API routes)
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        # If it's an API route or media, skip
+        if full_path.startswith("api/") or full_path.startswith("media/"):
+            raise HTTPException(status_code=404)
+        # Serve index.html for SPA routing
+        file_path = FRONTEND_DIR / full_path
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(FRONTEND_DIR / "index.html")
+
 class AnalyzeRequest(BaseModel):
     script_text: str
     style_id: str = "personification" # default style
