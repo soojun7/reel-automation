@@ -6,12 +6,15 @@ import base64
 import uuid
 import asyncio
 import aiohttp
+import tempfile
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+import boto3
+from botocore.config import Config
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -20,6 +23,66 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 from config import RUNWARE_API_KEY, WAVESPEED_API_KEY, OUTPUT_DIR
 CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
+
+# Cloudflare R2 설정
+R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID", "")
+R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID", "")
+R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "")
+R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME", "tellolabs")
+R2_PUBLIC_URL = os.getenv("R2_PUBLIC_URL", "")
+R2_PREFIX = "reel-automation"  # 디렉토리 prefix
+
+# R2 클라이언트 초기화
+s3_client = None
+if R2_ACCOUNT_ID and R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY:
+    s3_client = boto3.client(
+        's3',
+        endpoint_url=f'https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com',
+        aws_access_key_id=R2_ACCESS_KEY_ID,
+        aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+        config=Config(signature_version='s3v4'),
+        region_name='auto'
+    )
+    print(f"[R2] Connected to bucket: {R2_BUCKET_NAME}, prefix: {R2_PREFIX}/")
+
+def upload_to_r2(file_path: str, key: str, content_type: str = None) -> str:
+    """파일을 R2에 업로드하고 public URL 반환"""
+    if not s3_client:
+        raise Exception("R2 not configured")
+
+    full_key = f"{R2_PREFIX}/{key}"
+    extra_args = {}
+    if content_type:
+        extra_args['ContentType'] = content_type
+
+    s3_client.upload_file(file_path, R2_BUCKET_NAME, full_key, ExtraArgs=extra_args)
+    return f"{R2_PUBLIC_URL}/{full_key}"
+
+def upload_bytes_to_r2(data: bytes, key: str, content_type: str = None) -> str:
+    """바이트 데이터를 R2에 업로드하고 public URL 반환"""
+    if not s3_client:
+        raise Exception("R2 not configured")
+
+    full_key = f"{R2_PREFIX}/{key}"
+    extra_args = {}
+    if content_type:
+        extra_args['ContentType'] = content_type
+
+    s3_client.put_object(Bucket=R2_BUCKET_NAME, Key=full_key, Body=data, **extra_args)
+    return f"{R2_PUBLIC_URL}/{full_key}"
+
+async def download_to_temp(url: str, suffix: str = ".mp4") -> str:
+    """URL에서 파일을 다운로드해서 임시 파일로 저장"""
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                raise Exception(f"Failed to download: {url}")
+            data = await resp.read()
+
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    temp_file.write(data)
+    temp_file.close()
+    return temp_file.name
 
 app = FastAPI(title="Reel Studio API")
 
@@ -469,80 +532,104 @@ async def generate_video_api(req: VideoGenerateRequest):
 
 @app.post("/api/combine-videos")
 async def combine_videos_api(req: CombineVideosRequest):
-    output_dir = OUTPUT_DIR / f"reel_{req.run_id}"
-    final_path = output_dir / "final_combined.mp4"
-    
+    """영상들을 다운로드 → ffmpeg로 합치기 → R2에 업로드"""
     import subprocess
-    
-    # Resolve absolute local paths
-    local_video_paths = []
-    for v_url in req.video_urls:
-        fname = v_url.split("/")[-1]
-        local_path = output_dir / fname
-        if local_path.exists():
-            local_video_paths.append(str(local_path))
-            
-    if not local_video_paths:
-        raise HTTPException(status_code=400, detail="No valid local videos to combine")
-        
-    trimmed_files = []
-    for vf in local_video_paths:
-        trimmed = vf.replace('.mp4', '_cut.mp4')
 
-        # 1. 먼저 끝 무음 감지 (silencedetect)
-        detect_result = subprocess.run([
-            'ffmpeg', '-i', vf, '-af', 'silencedetect=noise=-30dB:d=0.3',
-            '-f', 'null', '-'
+    if not req.video_urls:
+        raise HTTPException(status_code=400, detail="No video URLs provided")
+
+    temp_files = []
+    trimmed_files = []
+
+    try:
+        # 1. 모든 영상 다운로드
+        print(f"[combine] Downloading {len(req.video_urls)} videos...")
+        for i, url in enumerate(req.video_urls):
+            temp_path = await download_to_temp(url, suffix=f"_{i}.mp4")
+            temp_files.append(temp_path)
+            print(f"[combine] Downloaded {i+1}/{len(req.video_urls)}: {temp_path}")
+
+        # 2. 각 영상 처리 (끝 무음 감지 + 자르기)
+        for i, vf in enumerate(temp_files):
+            trimmed = vf.replace('.mp4', '_cut.mp4')
+
+            # 끝 무음 감지
+            detect_result = subprocess.run([
+                'ffmpeg', '-i', vf, '-af', 'silencedetect=noise=-30dB:d=0.3',
+                '-f', 'null', '-'
+            ], capture_output=True, text=True)
+
+            silence_starts = []
+            for line in detect_result.stderr.split('\n'):
+                if 'silence_start:' in line:
+                    try:
+                        start = float(line.split('silence_start:')[1].split()[0])
+                        silence_starts.append(start)
+                    except:
+                        pass
+
+            # 끝 무음 시작점 (없으면 5.5초 기본값)
+            if silence_starts and silence_starts[-1] > 1.0:
+                cut_time = min(silence_starts[-1] + 0.2, 6.0)
+            else:
+                cut_time = 5.5
+
+            print(f"[combine] Video {i+1}: cutting at {cut_time:.2f}s")
+
+            # 자르기 + 스케일 + 인코딩
+            subprocess.run([
+                'ffmpeg', '-i', vf, '-t', str(cut_time),
+                '-vf', 'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,fps=30',
+                '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+                '-c:a', 'aac', '-ar', '44100', '-ac', '2', '-b:a', '128k',
+                '-avoid_negative_ts', 'make_zero',
+                '-video_track_timescale', '30000',
+                trimmed, '-y'
+            ], capture_output=True)
+            trimmed_files.append(trimmed)
+
+        # 3. 영상 합치기
+        n = len(trimmed_files)
+        inputs = []
+        for tf in trimmed_files:
+            inputs.extend(['-i', tf])
+
+        filter_parts = ''.join([f'[{i}:v][{i}:a]' for i in range(n)])
+        filter_complex = f'{filter_parts}concat=n={n}:v=1:a=1[outv][outa]'
+
+        final_temp = tempfile.NamedTemporaryFile(delete=False, suffix='_combined.mp4')
+        final_temp.close()
+
+        result = subprocess.run([
+            'ffmpeg', *inputs,
+            '-filter_complex', filter_complex,
+            '-map', '[outv]', '-map', '[outa]',
+            '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+            '-c:a', 'aac', '-b:a', '128k',
+            final_temp.name, '-y'
         ], capture_output=True, text=True)
 
-        # 마지막 silence_start 찾기
-        silence_starts = []
-        for line in detect_result.stderr.split('\n'):
-            if 'silence_start:' in line:
-                try:
-                    start = float(line.split('silence_start:')[1].split()[0])
-                    silence_starts.append(start)
-                except:
-                    pass
+        if not os.path.exists(final_temp.name) or os.path.getsize(final_temp.name) == 0:
+            print(f"[combine] ffmpeg error: {result.stderr}")
+            raise HTTPException(status_code=500, detail="ffmpeg combination failed")
 
-        # 끝 무음 시작점 (없으면 5.5초 기본값)
-        if silence_starts and silence_starts[-1] > 1.0:
-            cut_time = min(silence_starts[-1] + 0.2, 6.0)  # 무음 시작 + 0.2초 여유, 최대 6초
-        else:
-            cut_time = 5.5
+        # 4. R2에 업로드
+        r2_key = f"runs/{req.run_id}/final_combined.mp4"
+        r2_url = upload_to_r2(final_temp.name, r2_key, content_type='video/mp4')
+        print(f"[combine] Uploaded to R2: {r2_url}")
 
-        print(f"[combine] {vf}: cutting at {cut_time:.2f}s")
+        return {"video_url": r2_url}
 
-        # 2. 자르기 + 스케일 + 인코딩
-        subprocess.run([
-            'ffmpeg', '-i', vf, '-t', str(cut_time),
-            '-vf', 'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,fps=30',
-            '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-            '-c:a', 'aac', '-ar', '44100', '-ac', '2', '-b:a', '128k',
-            '-avoid_negative_ts', 'make_zero',
-            '-video_track_timescale', '30000',
-            trimmed, '-y'
-        ], capture_output=True)
-        trimmed_files.append(trimmed)
-        
-    n = len(trimmed_files)
-    inputs = []
-    for tf in trimmed_files:
-        inputs.extend(['-i', tf])
-        
-    filter_parts = ''.join([f'[{i}:v][{i}:a]' for i in range(n)])
-    filter_complex = f'{filter_parts}concat=n={n}:v=1:a=1[outv][outa]'
-    
-    subprocess.run([
-        'ffmpeg', *inputs,
-        '-filter_complex', filter_complex,
-        '-map', '[outv]', '-map', '[outa]',
-        '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-        '-c:a', 'aac', '-b:a', '128k',
-        str(final_path), '-y'
-    ], capture_output=True)
-    
-    if final_path.exists():
-        return {"video_url": f"/media/reel_{req.run_id}/final_combined.mp4"}
-    
-    raise HTTPException(status_code=500, detail="ffmpeg combination failed")
+    finally:
+        # 임시 파일 정리
+        for f in temp_files + trimmed_files:
+            try:
+                if os.path.exists(f):
+                    os.unlink(f)
+            except:
+                pass
+        try:
+            if 'final_temp' in locals() and os.path.exists(final_temp.name):
+                os.unlink(final_temp.name)
+        except:
+            pass

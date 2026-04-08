@@ -171,8 +171,34 @@ export default function VideoGeneration() {
 
       await Promise.all(promises);
 
-      // 영상 합치기는 서버 스토리지가 필요해서 클라우드 스토리지 연동 후 구현 예정
-      // 지금은 개별 영상만 지원
+      // 영상 합치기 (R2 스토리지 사용)
+      try {
+        // 최신 segments 상태에서 video URL 가져오기
+        const videoUrls = segments
+          .map((s, i) => {
+            // updateSegment가 비동기라서 직접 generated_video_url을 가져올 수 없음
+            // Promise.all 완료 후 상태가 업데이트되었을 것이므로 다시 fetch
+            return s.generated_video_url;
+          })
+          .filter(Boolean);
+
+        if (videoUrls.length > 0) {
+          const res = await fetch(`${API_URL}/api/combine-videos`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              video_urls: videoUrls,
+              run_id: runId
+            })
+          });
+          const data = await res.json();
+          if (data.video_url) {
+            setCombinedVideoUrl(data.video_url);
+          }
+        }
+      } catch (e) {
+        console.error("Combine failed", e);
+      }
 
       setIsComplete(true);
     };
