@@ -1,0 +1,90 @@
+{
+  "title": "커피 마시는 올바른 타이밍",
+  "outro_text": "커피도 타이밍이 생명! 건강하게 마시자!",
+  "segments": [
+    {
+      "id": 1,
+      "character": {
+        "name": "아메리카노",
+        "shape": "tall iced coffee cup with straw",
+        "color": "dark brown coffee with ice cubes, transparent plastic cup",
+        "description": "카페인 음료"
+      },
+      "background": "modern office desk, morning sunlight through window, keyboard and monitor visible",
+      "props": ["alarm clock showing 10:00", "breakfast plate", "laptop"],
+      "audio_text": "나 아메리카노야! 아침에 일어나자마자 날 마셔? 코르티솔이 이미 높을 때 카페인 넣으면 효과 반감이야! 기상 후 1-2시간 뒤에 마셔!",
+      "shots": [
+        {
+          "type": "medium",
+          "emotion": "happy",
+          "gesture": "waving hello cheerfully",
+          "subtitle": "나 아메리카노야!",
+          "duration": 1.0
+        },
+        {
+          "type": "medium",
+          "emotion": "shocked",
+          "gesture": "hands on head in disbelief",
+          "subtitle": "일어나자마자 날 마셔?",
+          "duration": 1.2
+        },
+        {
+          "type": "closeup",
+          "emotion": "serious",
+          "gesture": "pointing finger explaining",
+          "subtitle": "코르티솔 높을 때 효과 반감!",
+          "duration": 1.5
+        },
+        {
+          "type": "medium",
+          "emotion": "satisfied",
+          "gesture": "thumbs up confidently",
+          "subtitle": "1-2시간 뒤에 마셔!",
+          "duration": 1.2
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "character": {
+        "name": "아메리카노",
+        "shape": "tall iced coffee cup with straw",
+        "color": "dark brown coffee with ice cubes, transparent plastic cup",
+        "description": "카페인 음료"
+      },
+      "background": "cozy bedroom at night, bed with pillows, nightstand with lamp, moonlight through window",
+      "props": ["pillow", "blanket", "clock showing 22:00"],
+      "audio_text": "밤 10시에 날 마시면? 카페인 반감기가 5-6시간이야! 새벽 3-4시까지 잠 못 자! 오후 2시 이후엔 디카페인으로!",
+      "shots": [
+        {
+          "type": "medium",
+          "emotion": "worried",
+          "gesture": "standing near bed looking concerned",
+          "subtitle": "밤 10시에 날 마시면?",
+          "duration": 1.2
+        },
+        {
+          "type": "closeup",
+          "emotion": "serious",
+          "gesture": "holding up five fingers",
+          "subtitle": "반감기가 5-6시간!",
+          "duration": 1.2
+        },
+        {
+          "type": "medium",
+          "emotion": "angry",
+          "gesture": "making X sign with arms",
+          "subtitle": "새벽까지 잠 못 자!",
+          "duration": 1.0
+        },
+        {
+          "type": "closeup",
+          "emotion": "satisfied",
+          "gesture": "calm nodding gesture",
+          "subtitle": "오후 2시 이후엔 디카페인!",
+          "duration": 1.3
+        }
+      ]
+    }
+  ]
+}
