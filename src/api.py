@@ -250,11 +250,13 @@ ACTION: {scene}
 
 @app.post("/api/analyze")
 async def analyze_script(req: AnalyzeRequest):
+    print(f"[analyze] global_context received: '{req.global_context}'")
     segments = await analyze_script_with_claude(req.script_text, req.style_id, req.global_context)
     if not segments:
         raise HTTPException(status_code=500, detail="Failed to analyze script")
 
     prompts = convert_to_prompts(segments, req.style_id, req.global_context)
+    print(f"[analyze] First segment image_prompt: {prompts[0]['image_prompt'][:200]}...")
     
     # Generate a run ID for this session
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
