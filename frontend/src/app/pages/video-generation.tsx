@@ -194,6 +194,7 @@ export default function VideoGeneration() {
         console.log(`[combine] Video URLs to combine: ${videoUrls.length}`, videoUrls);
 
         if (videoUrls.length > 0) {
+          toast.info("통합 영상 생성 중...");
           const res = await fetch(`${API_URL}/api/combine-videos`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -203,14 +204,20 @@ export default function VideoGeneration() {
             })
           });
           const data = await res.json();
-          if (data.video_url) {
+          if (res.ok && data.video_url) {
             setCombinedVideoUrl(data.video_url);
+            toast.success("통합 영상 생성 완료!");
           } else {
-            console.error("[combine] No video_url in response", data);
+            console.error("[combine] Error response", data);
+            toast.error(`통합 영상 생성 실패: ${data.detail || "알 수 없는 에러"}`);
           }
+        } else {
+          console.error("[combine] No video URLs available");
+          toast.error("통합 영상 생성 실패: 개별 영상 URL이 없습니다");
         }
-      } catch (e) {
+      } catch (e: any) {
         console.error("Combine failed", e);
+        toast.error(`통합 영상 생성 실패: ${e.message || e}`);
       }
 
       setIsComplete(true);
