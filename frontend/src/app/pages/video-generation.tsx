@@ -146,7 +146,8 @@ export default function VideoGeneration() {
               character_name: seg.character_name,
               video_prompt: seg.video_prompt,
               image_url: seg.runware_url,
-              run_id: runId
+              run_id: runId,
+              dialogue: seg.dialogue  // 대사 길이에 따라 영상 길이 조절
             }),
             signal: controller.signal
           });

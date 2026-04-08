@@ -142,6 +142,7 @@ class VideoGenerateRequest(BaseModel):
     video_prompt: str
     image_url: str  # Runware URL (https://im.runware.ai/...)
     run_id: str
+    dialogue: str = ""  # 대사 (길이에 따라 영상 길이 조절)
 
 class CombineVideosRequest(BaseModel):
     video_urls: List[str]
@@ -478,6 +479,23 @@ async def generate_video_api(req: VideoGenerateRequest):
     output_dir.mkdir(parents=True, exist_ok=True)
     vid_path = output_dir / f"{req.segment_index+1:02d}_{req.character_name}.mp4"
 
+    # 대사 길이에 따라 영상 길이 계산 (한글 약 3-4글자/초)
+    dialogue_len = len(req.dialogue) if req.dialogue else 0
+    if dialogue_len <= 20:
+        duration = 5
+    elif dialogue_len <= 40:
+        duration = 6
+    elif dialogue_len <= 60:
+        duration = 7
+    elif dialogue_len <= 80:
+        duration = 8
+    elif dialogue_len <= 100:
+        duration = 9
+    else:
+        duration = 10
+
+    print(f"[generate-video] dialogue length: {dialogue_len}, duration: {duration}s")
+
     task_uuid = str(uuid.uuid4())
     payload = [{
         "taskType": "videoInference",
@@ -489,7 +507,7 @@ async def generate_video_api(req: VideoGenerateRequest):
         "numberResults": 1,
         "inputs": {"frameImages": [{"image": req.image_url}]},
         "positivePrompt": req.video_prompt,
-        "duration": 6,
+        "duration": duration,
         "deliveryMethod": "async"
     }]
 
