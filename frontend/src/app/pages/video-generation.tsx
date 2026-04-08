@@ -97,6 +97,7 @@ export default function VideoGeneration() {
   const [regenerateInstruction, setRegenerateInstruction] = useState("");
   const [combineStatus, setCombineStatus] = useState<"idle" | "generating" | "success" | "error">("idle");
   const [combineError, setCombineError] = useState<string | null>(null);
+  const [srtUrl, setSrtUrl] = useState<string | null>(null);
 
   // Settings state
   const [selectedEmotion, setSelectedEmotion] = useState("normal");
@@ -205,13 +206,26 @@ export default function VideoGeneration() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               video_urls: videoUrls,
-              run_id: runId
+              run_id: runId,
+              segments: segments.map(s => ({
+                character_name: s.character_name,
+                dialogue: s.dialogue
+              })),
+              include_subtitles: settings.subtitles,
+              font_name: selectedFont === "noto-sans" ? "NotoSansKR-Bold" :
+                        selectedFont === "pretendard" ? "Pretendard-Bold" :
+                        selectedFont === "nanumgothic" ? "NanumGothic" :
+                        selectedFont === "malgun" ? "MalgunGothic" : "NotoSansKR-Bold",
+              max_chars: maxCharacters
             })
           });
           const data = await res.json();
           if (res.ok && data.video_url) {
             setCombinedVideoUrl(data.video_url);
             setCombineStatus("success");
+            if (data.srt_url) {
+              setSrtUrl(data.srt_url);
+            }
             toast.success("통합 영상 생성 완료!");
           } else {
             const errMsg = data.detail || "알 수 없는 에러";
@@ -259,6 +273,92 @@ export default function VideoGeneration() {
     if (combinedVideoUrl) {
       window.open(combinedVideoUrl, "_blank");
       toast.success("통합 영상 다운로드를 시작합니다.");
+    }
+  };
+
+  const handleSrtDownload = async () => {
+    // SRT 생성 API 호출
+    try {
+      const res = await fetch(`${API_URL}/api/generate-srt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          segments: segments.map(s => ({
+            character_name: s.character_name,
+            dialogue: s.dialogue
+          })),
+          run_id: runId
+        })
+      });
+      const data = await res.json();
+      if (data.srt_url) {
+        window.open(data.srt_url, "_blank");
+        toast.success("SRT 자막 다운로드를 시작합니다.");
+      } else if (data.srt_content) {
+        // Blob으로 다운로드
+        const blob = new Blob([data.srt_content], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${runId}_subtitles.srt`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast.success("SRT 자막 다운로드를 시작합니다.");
+      }
+    } catch (e) {
+      toast.error("SRT 생성에 실패했습니다.");
+    }
+  };
+
+  const handleRegenerateCombined = async () => {
+    if (!segments.every(s => s.generated_video_url)) {
+      toast.error("모든 개별 영상이 생성되어야 합니다.");
+      return;
+    }
+
+    setCombineStatus("generating");
+    setCombineError(null);
+    setCombinedVideoUrl(null);
+
+    try {
+      const videoUrls = segments.map(s => s.generated_video_url).filter(Boolean);
+      toast.info("통합 영상 재생성 중...");
+
+      const res = await fetch(`${API_URL}/api/combine-videos`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          video_urls: videoUrls,
+          run_id: runId,
+          segments: segments.map(s => ({
+            character_name: s.character_name,
+            dialogue: s.dialogue
+          })),
+          include_subtitles: settings.subtitles,
+          font_name: selectedFont === "noto-sans" ? "NotoSansKR-Bold" :
+                    selectedFont === "pretendard" ? "Pretendard-Bold" :
+                    selectedFont === "nanumgothic" ? "NanumGothic" :
+                    selectedFont === "malgun" ? "MalgunGothic" : "NotoSansKR-Bold",
+          max_chars: maxCharacters
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.video_url) {
+        setCombinedVideoUrl(data.video_url);
+        setCombineStatus("success");
+        if (data.srt_url) {
+          setSrtUrl(data.srt_url);
+        }
+        toast.success("통합 영상 재생성 완료!");
+      } else {
+        setCombineStatus("error");
+        setCombineError(data.detail || "알 수 없는 에러");
+        toast.error(`재생성 실패: ${data.detail || "알 수 없는 에러"}`);
+      }
+    } catch (e: any) {
+      setCombineStatus("error");
+      setCombineError(e.message || String(e));
+      toast.error(`재생성 실패: ${e.message || e}`);
     }
   };
 
@@ -508,7 +608,7 @@ export default function VideoGeneration() {
             </div>
 
             {/* Action Buttons */}
-            <div className="flex gap-3 mb-6">
+            <div className="flex flex-wrap gap-3 mb-6">
               <button
                 onClick={handleIndividualDownload}
                 className="px-5 py-2.5 bg-gradient-to-br from-[var(--primary-500)] to-[var(--secondary-500)] text-white font-semibold rounded-xl shadow-lg shadow-[var(--primary-500)]/30 hover:-translate-y-0.5 transition-all hover:shadow-[var(--primary-500)]/50 flex items-center gap-2"
@@ -518,10 +618,18 @@ export default function VideoGeneration() {
               </button>
               <button
                 onClick={handleCombinedDownload}
-                className="px-5 py-2.5 bg-gradient-to-br from-[var(--primary-500)] to-[var(--secondary-500)] text-white font-semibold rounded-xl shadow-lg shadow-[var(--primary-500)]/30 hover:-translate-y-0.5 transition-all hover:shadow-[var(--primary-500)]/50 flex items-center gap-2"
+                disabled={!combinedVideoUrl}
+                className="px-5 py-2.5 bg-gradient-to-br from-[var(--primary-500)] to-[var(--secondary-500)] text-white font-semibold rounded-xl shadow-lg shadow-[var(--primary-500)]/30 hover:-translate-y-0.5 transition-all hover:shadow-[var(--primary-500)]/50 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0"
               >
                 <Download className="w-4 h-4" />
                 통합 영상 다운로드
+              </button>
+              <button
+                onClick={handleSrtDownload}
+                className="px-5 py-2.5 bg-[var(--bg-700)] border border-[var(--border)] text-[var(--text-100)] font-semibold rounded-xl hover:bg-[var(--bg-600)] transition-all flex items-center gap-2"
+              >
+                <FileText className="w-4 h-4" />
+                SRT 자막 다운로드
               </button>
             </div>
 
@@ -617,12 +725,23 @@ export default function VideoGeneration() {
 
                     <div className="flex gap-2 mt-4">
                       <button
-                        onClick={() => openRegenerateDialog(null)}
-                        className="px-4 py-2.5 bg-[var(--bg-700)] border border-[var(--border)] text-[var(--text-100)] font-medium rounded-xl hover:bg-[var(--bg-600)] transition-all flex items-center gap-2"
+                        onClick={handleRegenerateCombined}
+                        disabled={combineStatus === "generating"}
+                        className="px-4 py-2.5 bg-[var(--bg-700)] border border-[var(--border)] text-[var(--text-100)] font-medium rounded-xl hover:bg-[var(--bg-600)] transition-all flex items-center gap-2 disabled:opacity-50"
                       >
-                        <RefreshCw className="w-4 h-4" />
-                        {combineStatus === "error" ? "다시 시도" : "통합 영상 재생성"}
+                        <RefreshCw className={`w-4 h-4 ${combineStatus === "generating" ? "animate-spin" : ""}`} />
+                        {combineStatus === "generating" ? "생성 중..." : combineStatus === "error" ? "다시 시도" : "통합 영상 재생성"}
                       </button>
+                      <div className="flex items-center gap-2 text-sm text-[var(--text-400)]">
+                        <input
+                          type="checkbox"
+                          id="includeSubtitles"
+                          checked={settings.subtitles}
+                          onChange={() => handleToggle("subtitles")}
+                          className="w-4 h-4 rounded"
+                        />
+                        <label htmlFor="includeSubtitles">자막 포함</label>
+                      </div>
                     </div>
                   </div>
                 </div>

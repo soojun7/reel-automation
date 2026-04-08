@@ -288,6 +288,14 @@ class VideoGenerateRequest(BaseModel):
 class CombineVideosRequest(BaseModel):
     video_urls: List[str]
     run_id: str
+    segments: List[dict] = []  # 자막용 세그먼트 정보
+    include_subtitles: bool = False  # 자막 포함 여부
+    font_name: str = "NotoSansKR-Bold"  # 자막 폰트
+    max_chars: int = 15  # 줄당 최대 글자수
+
+class SrtGenerateRequest(BaseModel):
+    segments: List[dict]  # [{character_name, dialogue, duration}, ...]
+    run_id: str
 
 async def analyze_script_with_claude(script_text: str, style_id: str, global_context: str = "") -> List[dict]:
     # Style-specific prompts
@@ -732,9 +740,83 @@ async def generate_video_api(req: VideoGenerateRequest):
 
     raise HTTPException(status_code=500, detail="Video generation timeout")
 
+def generate_srt_content(segments: List[dict], video_durations: List[float], max_chars: int = 15) -> str:
+    """세그먼트별 대사로 SRT 자�� 생성"""
+    srt_lines = []
+    current_time = 0.0
+    idx = 1
+
+    for i, (seg, duration) in enumerate(zip(segments, video_durations)):
+        dialogue = seg.get("dialogue", "")
+        if not dialogue:
+            current_time += duration
+            continue
+
+        # 대사를 max_chars 글자씩 나누기
+        chunks = []
+        words = dialogue
+        while len(words) > 0:
+            if len(words) <= max_chars:
+                chunks.append(words)
+                break
+            # 공백이나 구두점에서 자르기
+            cut_pos = max_chars
+            for j in range(max_chars, 0, -1):
+                if words[j-1] in ' ,.:!?':
+                    cut_pos = j
+                    break
+            chunks.append(words[:cut_pos].strip())
+            words = words[cut_pos:].strip()
+
+        # 각 청크에 시간 할당
+        chunk_duration = duration / len(chunks) if chunks else duration
+
+        for chunk in chunks:
+            start_time = current_time
+            end_time = current_time + chunk_duration
+
+            # SRT 시간 포맷 (HH:MM:SS,mmm)
+            def format_time(t):
+                h = int(t // 3600)
+                m = int((t % 3600) // 60)
+                s = int(t % 60)
+                ms = int((t % 1) * 1000)
+                return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+            srt_lines.append(f"{idx}")
+            srt_lines.append(f"{format_time(start_time)} --> {format_time(end_time)}")
+            srt_lines.append(chunk)
+            srt_lines.append("")
+
+            idx += 1
+            current_time = end_time
+
+    return "\n".join(srt_lines)
+
+@app.post("/api/generate-srt")
+async def generate_srt_api(req: SrtGenerateRequest):
+    """SRT 자막 파일 생성"""
+    # 각 세그먼트의 예상 길이 계산 (대사 길이 기반)
+    durations = []
+    for seg in req.segments:
+        dialogue = seg.get("dialogue", "")
+        dialogue_len = len(dialogue) if dialogue else 0
+        duration = max(5, min(15, dialogue_len // 7)) if dialogue_len > 0 else 5
+        durations.append(float(duration))
+
+    srt_content = generate_srt_content(req.segments, durations)
+
+    # R2에 업로드
+    if s3_client:
+        r2_key = f"runs/{req.run_id}/subtitles.srt"
+        r2_url = upload_bytes_to_r2(srt_content.encode('utf-8'), r2_key, content_type='text/plain; charset=utf-8')
+        return {"srt_url": r2_url, "srt_content": srt_content}
+
+    return {"srt_content": srt_content}
+
 @app.post("/api/combine-videos")
 async def combine_videos_api(req: CombineVideosRequest):
-    """영상들을 다운로드 → ffmpeg로 합치기 → R2에 업로드"""
+    """영상들을 다운로드 �� ffmpeg로 ��치기 → R2에 업��드"""
     import subprocess
     import shutil
 
@@ -839,12 +921,71 @@ async def combine_videos_api(req: CombineVideosRequest):
             print(f"[combine] ffmpeg error: {result.stderr}")
             raise HTTPException(status_code=500, detail="ffmpeg combination failed")
 
-        # 4. R2에 업로드
+        output_file = final_temp.name
+        srt_url = None
+
+        # 4. 자막 포함 옵션
+        if req.include_subtitles and req.segments:
+            print(f"[combine] Adding subtitles...")
+            # 각 영상의 실제 길이 측정
+            video_durations = []
+            for tf in trimmed_files:
+                probe = subprocess.run([
+                    'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+                    '-of', 'default=noprint_wrappers=1:nokey=1', tf
+                ], capture_output=True, text=True)
+                try:
+                    video_durations.append(float(probe.stdout.strip()))
+                except:
+                    video_durations.append(5.0)
+
+            # SRT 생성
+            srt_content = generate_srt_content(req.segments, video_durations, req.max_chars)
+            srt_temp = tempfile.NamedTemporaryFile(delete=False, suffix='.srt', mode='w', encoding='utf-8')
+            srt_temp.write(srt_content)
+            srt_temp.close()
+
+            # SRT를 R2에도 업로드
+            if s3_client:
+                srt_key = f"runs/{req.run_id}/subtitles.srt"
+                srt_url = upload_bytes_to_r2(srt_content.encode('utf-8'), srt_key, content_type='text/plain; charset=utf-8')
+
+            # 자막 합성
+            subtitled_temp = tempfile.NamedTemporaryFile(delete=False, suffix='_subtitled.mp4')
+            subtitled_temp.close()
+
+            # 자막 스타일 설정
+            subtitle_style = f"FontName={req.font_name},FontSize=24,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,BorderStyle=3,Outline=2,Shadow=1,Alignment=2,MarginV=40"
+
+            sub_result = subprocess.run([
+                'ffmpeg', '-i', final_temp.name,
+                '-vf', f"subtitles={srt_temp.name}:force_style='{subtitle_style}'",
+                '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+                '-c:a', 'copy',
+                subtitled_temp.name, '-y'
+            ], capture_output=True, text=True)
+
+            if os.path.exists(subtitled_temp.name) and os.path.getsize(subtitled_temp.name) > 0:
+                output_file = subtitled_temp.name
+                print(f"[combine] Subtitles added successfully")
+            else:
+                print(f"[combine] Subtitle burn failed: {sub_result.stderr}")
+
+            # SRT 임시파일 정리
+            try:
+                os.unlink(srt_temp.name)
+            except:
+                pass
+
+        # 5. R2에 업로드
         r2_key = f"runs/{req.run_id}/final_combined.mp4"
-        r2_url = upload_to_r2(final_temp.name, r2_key, content_type='video/mp4')
+        r2_url = upload_to_r2(output_file, r2_key, content_type='video/mp4')
         print(f"[combine] Uploaded to R2: {r2_url}")
 
-        return {"video_url": r2_url}
+        response = {"video_url": r2_url}
+        if srt_url:
+            response["srt_url"] = srt_url
+        return response
 
     finally:
         # 임시 파일 정리
@@ -857,5 +998,10 @@ async def combine_videos_api(req: CombineVideosRequest):
         try:
             if 'final_temp' in locals() and os.path.exists(final_temp.name):
                 os.unlink(final_temp.name)
+        except:
+            pass
+        try:
+            if 'subtitled_temp' in locals() and os.path.exists(subtitled_temp.name):
+                os.unlink(subtitled_temp.name)
         except:
             pass
