@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   CheckCircle2,
@@ -87,9 +87,10 @@ export default function VideoGeneration() {
   const [playingId, setPlayingId] = useState<number | null>(null);
   const [mutedVideos, setMutedVideos] = useState<Set<number>>(new Set());
   const [isPanelOpen, setIsPanelOpen] = useState(true);
-  
+
   // Local state for UI components
   const [generatingStates, setGeneratingStates] = useState<Record<number, string>>({});
+  const hasStartedRef = useRef(false);  // 생성 시작 여부 (ref로 추적)
   
   // Regenerate dialog state
   const [regenerateDialogOpen, setRegenerateDialogOpen] = useState(false);
@@ -121,6 +122,11 @@ export default function VideoGeneration() {
       return;
     }
 
+    // 이미 시작했으면 스킵 (중복 실행 방지 - ref 사용)
+    if (hasStartedRef.current) {
+      return;
+    }
+
     // 모든 영상이 이미 생성되었는지 확인
     const allVideosGenerated = segments.every(s => s.generated_video_url);
 
@@ -133,6 +139,9 @@ export default function VideoGeneration() {
       setIsComplete(true);
       return;
     }
+
+    // 생성 시작 표시
+    hasStartedRef.current = true;
 
     const generateVideos = async () => {
       let completed = 0;
@@ -266,7 +275,8 @@ export default function VideoGeneration() {
     };
 
     generateVideos();
-  }, [segments, runId, combinedVideoUrl]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runId]);  // runId만 의존 - segments 변경 시 재실행 방지
 
   const handleToggle = (key: keyof typeof settings) => {
     setSettings((prev) => ({ ...prev, [key]: !prev[key] }));
