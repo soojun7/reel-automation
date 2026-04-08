@@ -308,15 +308,42 @@ export default function VideoGeneration() {
     }
   };
 
-  const handleIndividualDownload = () => {
-    toast.success("개별 영상 다운로드를 시작합니다.");
-    // Implement actual download logic here if needed
+  const downloadFile = async (url: string, filename: string) => {
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch (e) {
+      // fallback: 새 탭에서 열기
+      window.open(url, "_blank");
+    }
   };
 
-  const handleCombinedDownload = () => {
+  const handleIndividualDownload = async () => {
+    toast.info("개별 영상 다운로드를 시작합니다...");
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i];
+      if (seg.generated_video_url) {
+        await downloadFile(seg.generated_video_url, `${runId}_${i + 1}_${seg.character_name}.mp4`);
+        // 각 다운로드 사이에 약간의 딜레이
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+    toast.success("모든 개별 영상 다운로드가 완료되었습니다.");
+  };
+
+  const handleCombinedDownload = async () => {
     if (combinedVideoUrl) {
-      window.open(combinedVideoUrl, "_blank");
-      toast.success("통합 영상 다운로드를 시작합니다.");
+      toast.info("통합 영상 다운로드 중...");
+      await downloadFile(combinedVideoUrl, `${runId}_combined.mp4`);
+      toast.success("통합 영상 다운로드가 완료되었습니다.");
     }
   };
 
@@ -335,19 +362,22 @@ export default function VideoGeneration() {
         })
       });
       const data = await res.json();
-      if (data.srt_url) {
-        window.open(data.srt_url, "_blank");
-        toast.success("SRT 자막 다운로드를 시작합니다.");
-      } else if (data.srt_content) {
-        // Blob으로 다운로드
-        const blob = new Blob([data.srt_content], { type: 'text/plain;charset=utf-8' });
+
+      // SRT 콘텐츠를 직접 Blob으로 다운로드
+      const srtContent = data.srt_content || "";
+      if (srtContent) {
+        const blob = new Blob([srtContent], { type: 'text/plain;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
         a.download = `${runId}_subtitles.srt`;
+        document.body.appendChild(a);
         a.click();
+        document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        toast.success("SRT 자막 다운로드를 시작합니다.");
+        toast.success("SRT 자막 다운로드가 완료되었습니다.");
+      } else {
+        toast.error("SRT 콘텐츠가 없습니다.");
       }
     } catch (e) {
       toast.error("SRT 생성에 실패했습니다.");
