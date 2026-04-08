@@ -15,12 +15,17 @@ elif DATABASE_URL.startswith("postgresql://"):
 engine = None
 async_session = None
 
-if DATABASE_URL:
-    engine = create_async_engine(DATABASE_URL, echo=False)
-    async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    print(f"[DB] Connected to database")
-else:
-    print("[DB] DATABASE_URL not set, running without database")
+try:
+    if DATABASE_URL:
+        engine = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+        async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        print(f"[DB] Database engine created")
+    else:
+        print("[DB] DATABASE_URL not set, running without database")
+except Exception as e:
+    print(f"[DB] Failed to create database engine: {e}")
+    engine = None
+    async_session = None
 
 class Base(DeclarativeBase):
     pass
@@ -42,9 +47,12 @@ class Project(Base):
 async def init_db():
     """데이터베이스 테이블 생성"""
     if engine:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        print("[DB] Tables created")
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            print("[DB] Tables created")
+        except Exception as e:
+            print(f"[DB] Failed to create tables: {e}")
 
 async def get_session() -> AsyncSession:
     """세션 생성"""

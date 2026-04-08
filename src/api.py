@@ -90,7 +90,10 @@ app = FastAPI(title="Reel Studio API")
 # Database initialization on startup
 @app.on_event("startup")
 async def startup_event():
-    await init_db()
+    try:
+        await init_db()
+    except Exception as e:
+        print(f"[startup] Database init failed: {e}")
 
 # Health check endpoint for Render
 @app.get("/health")
