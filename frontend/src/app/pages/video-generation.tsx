@@ -95,6 +95,8 @@ export default function VideoGeneration() {
   const [regenerateDialogOpen, setRegenerateDialogOpen] = useState(false);
   const [regenerateSegmentId, setRegenerateSegmentId] = useState<number | null>(null);
   const [regenerateInstruction, setRegenerateInstruction] = useState("");
+  const [combineStatus, setCombineStatus] = useState<"idle" | "generating" | "success" | "error">("idle");
+  const [combineError, setCombineError] = useState<string | null>(null);
 
   // Settings state
   const [selectedEmotion, setSelectedEmotion] = useState("normal");
@@ -115,6 +117,7 @@ export default function VideoGeneration() {
     // Determine if we need to generate videos
     const needsGeneration = segments.some(s => !s.generated_video_url);
     if (!needsGeneration && combinedVideoUrl) {
+      setCombineStatus("success");
       setIsComplete(true);
       return;
     }
@@ -185,6 +188,8 @@ export default function VideoGeneration() {
       await Promise.all(promises);
 
       // 영상 합치기 (R2 스토리지 사용)
+      setCombineStatus("generating");
+      setCombineError(null);
       try {
         // 로컬에서 추적한 video URL 사용 (React 상태 비동기 문제 해결)
         const videoUrls = segments
@@ -206,17 +211,25 @@ export default function VideoGeneration() {
           const data = await res.json();
           if (res.ok && data.video_url) {
             setCombinedVideoUrl(data.video_url);
+            setCombineStatus("success");
             toast.success("통합 영상 생성 완료!");
           } else {
+            const errMsg = data.detail || "알 수 없는 에러";
             console.error("[combine] Error response", data);
-            toast.error(`통합 영상 생성 실패: ${data.detail || "알 수 없는 에러"}`);
+            setCombineStatus("error");
+            setCombineError(errMsg);
+            toast.error(`통합 영상 생성 실패: ${errMsg}`);
           }
         } else {
           console.error("[combine] No video URLs available");
+          setCombineStatus("error");
+          setCombineError("개별 영상 URL이 없습니다");
           toast.error("통합 영상 생성 실패: 개별 영상 URL이 없습니다");
         }
       } catch (e: any) {
         console.error("Combine failed", e);
+        setCombineStatus("error");
+        setCombineError(e.message || String(e));
         toast.error(`통합 영상 생성 실패: ${e.message || e}`);
       }
 
@@ -512,8 +525,7 @@ export default function VideoGeneration() {
               </button>
             </div>
 
-            {/* Combined Video Section */}
-            {combinedVideoUrl && (
+            {/* Combined Video Section - Always show */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -528,43 +540,65 @@ export default function VideoGeneration() {
                 <div className="flex gap-6 p-6">
                   {/* Vertical Video Preview */}
                   <div className="relative group flex-shrink-0">
-                    <div className="w-[280px] h-[498px] bg-[var(--bg-700)] rounded-xl overflow-hidden">
-                      <video 
-                        src={combinedVideoUrl} 
-                        className="w-full h-full object-cover"
-                        controls={playingId === 0}
-                        autoPlay={playingId === 0}
-                        muted={mutedVideos.has(0)}
-                      />
-                      
-                      {/* Play Overlay */}
-                      {playingId !== 0 && (
-                      <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={() => setPlayingId(0)}
-                          className="w-16 h-16 rounded-full bg-white/90 flex items-center justify-center hover:scale-110 transition-transform"
-                        >
-                          <Play className="w-8 h-8 text-black ml-1" />
-                        </button>
-                      </div>
+                    <div className="w-[280px] h-[498px] bg-[var(--bg-700)] rounded-xl overflow-hidden flex items-center justify-center">
+                      {combinedVideoUrl ? (
+                        <>
+                          <video
+                            src={combinedVideoUrl}
+                            className="w-full h-full object-cover"
+                            controls={playingId === 0}
+                            autoPlay={playingId === 0}
+                            muted={mutedVideos.has(0)}
+                          />
+
+                          {/* Play Overlay */}
+                          {playingId !== 0 && (
+                          <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={() => setPlayingId(0)}
+                              className="w-16 h-16 rounded-full bg-white/90 flex items-center justify-center hover:scale-110 transition-transform"
+                            >
+                              <Play className="w-8 h-8 text-black ml-1" />
+                            </button>
+                          </div>
+                          )}
+
+                          {/* Duration Badge */}
+                          <div className="absolute bottom-3 left-3 px-2.5 py-1 bg-black/80 backdrop-blur-sm rounded-lg">
+                            <span className="text-xs font-semibold text-white">{segments.length}개 장면</span>
+                          </div>
+
+                          {/* Mute Button */}
+                          <button
+                            onClick={() => toggleMute(0)}
+                            className="absolute top-3 right-3 w-9 h-9 rounded-lg bg-black/60 backdrop-blur-sm flex items-center justify-center hover:bg-black/80 transition-colors opacity-0 group-hover:opacity-100"
+                          >
+                            {mutedVideos.has(0) ? (
+                              <VolumeX className="w-4 h-4 text-white" />
+                            ) : (
+                              <Volume2 className="w-4 h-4 text-white" />
+                            )}
+                          </button>
+                        </>
+                      ) : combineStatus === "generating" ? (
+                        <div className="text-center p-6">
+                          <Loader2 className="w-12 h-12 text-[var(--primary-500)] animate-spin mx-auto mb-4" />
+                          <p className="text-[var(--text-300)]">통합 영상 생성 중...</p>
+                        </div>
+                      ) : combineStatus === "error" ? (
+                        <div className="text-center p-6">
+                          <div className="w-12 h-12 rounded-full bg-[var(--error)]/20 flex items-center justify-center mx-auto mb-4">
+                            <X className="w-6 h-6 text-[var(--error)]" />
+                          </div>
+                          <p className="text-[var(--error)] font-medium mb-2">생성 실패</p>
+                          <p className="text-xs text-[var(--text-400)]">{combineError}</p>
+                        </div>
+                      ) : (
+                        <div className="text-center p-6">
+                          <Clock className="w-12 h-12 text-[var(--text-400)] mx-auto mb-4" />
+                          <p className="text-[var(--text-400)]">대기 중</p>
+                        </div>
                       )}
-
-                      {/* Duration Badge */}
-                      <div className="absolute bottom-3 left-3 px-2.5 py-1 bg-black/80 backdrop-blur-sm rounded-lg">
-                        <span className="text-xs font-semibold text-white">{segments.length}개 장면</span>
-                      </div>
-
-                      {/* Mute Button */}
-                      <button
-                        onClick={() => toggleMute(0)}
-                        className="absolute top-3 right-3 w-9 h-9 rounded-lg bg-black/60 backdrop-blur-sm flex items-center justify-center hover:bg-black/80 transition-colors opacity-0 group-hover:opacity-100"
-                      >
-                        {mutedVideos.has(0) ? (
-                          <VolumeX className="w-4 h-4 text-white" />
-                        ) : (
-                          <Volume2 className="w-4 h-4 text-white" />
-                        )}
-                      </button>
                     </div>
                   </div>
 
@@ -587,14 +621,13 @@ export default function VideoGeneration() {
                         className="px-4 py-2.5 bg-[var(--bg-700)] border border-[var(--border)] text-[var(--text-100)] font-medium rounded-xl hover:bg-[var(--bg-600)] transition-all flex items-center gap-2"
                       >
                         <RefreshCw className="w-4 h-4" />
-                        통합 영상 재생성
+                        {combineStatus === "error" ? "다시 시도" : "통합 영상 재생성"}
                       </button>
                     </div>
                   </div>
                 </div>
               </div>
             </motion.div>
-            )}
 
             {/* Individual Videos Title */}
             <div className="flex items-center gap-2 mb-4">
