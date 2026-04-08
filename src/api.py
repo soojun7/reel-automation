@@ -86,6 +86,13 @@ async def download_to_temp(url: str, suffix: str = ".mp4") -> str:
 
 app = FastAPI(title="Reel Studio API")
 
+# Health check endpoint for Render (supports both GET and HEAD)
+@app.head("/")
+@app.get("/health")
+@app.head("/health")
+async def health_check():
+    return {"status": "ok"}
+
 # Enable CORS for the React frontend
 app.add_middleware(
     CORSMiddleware,
@@ -290,7 +297,7 @@ def convert_to_prompts(segments: List[dict], style_id: str, global_context: str 
         scene = seg.get("scene_direction", "표정을 바꾸며 말함")
         char_appearance = seg.get("character_appearance", f"cute {name} character")
         background = seg.get("background_scene", "clean minimal background")
-        brand_domain = seg.get("brand_domain", "").strip()
+        brand_domain = (seg.get("brand_domain") or "").strip()
 
         # 참고사항이 있으면 배경 대체, 없으면 기존 배경 사용
         final_background = context_background if context_background else background
